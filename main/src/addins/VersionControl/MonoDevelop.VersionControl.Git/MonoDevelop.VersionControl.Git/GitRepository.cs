@@ -38,6 +38,7 @@ using LibGit2Sharp;
 using MonoDevelop.Core;
 using MonoDevelop.Core.Text;
 using MonoDevelop.Ide;
+using MonoDevelop.VersionControl.Git.ClientLibrary;
 using ProgressMonitor = MonoDevelop.Core.ProgressMonitor;
 
 namespace MonoDevelop.VersionControl.Git
@@ -383,9 +384,13 @@ namespace MonoDevelop.VersionControl.Git
 		}
 		public override bool TryGetFileUpdateEventInfo (Repository rep, FilePath file, out FileUpdateEventInfo eventInfo)
 		{
-			if (file.FileName == "index" && file.ParentDirectory.FileName == ".git") {
-				eventInfo = FileUpdateEventInfo.UpdateRepository (rep);
-				return true;
+			if (file.ParentDirectory.FileName == ".git") {
+				if (file.FileName == "index") {
+					eventInfo = FileUpdateEventInfo.UpdateRepository (rep);
+					return true;
+				}
+				eventInfo = null;
+				return false;
 			}
 			return base.TryGetFileUpdateEventInfo (rep, file, out eventInfo);
 		}
@@ -802,7 +807,7 @@ namespace MonoDevelop.VersionControl.Git
 							}
 						}
 
-						GetFilesVersionInfoCore (repository, rev, group.ToList (), versions);
+						await GetFilesVersionInfoCoreAsync (repository, rev, group.ToList (), versions);
 					}
 				}
 			} else {
@@ -832,45 +837,27 @@ namespace MonoDevelop.VersionControl.Git
 					}
 				}
 
-				GetDirectoryVersionInfoCore (rootRepository, arev, localDirectory.CanonicalPath, versions, recursive);
+				await GetDirectoryVersionInfoCoreAsync (rootRepository, arev, localDirectory.CanonicalPath, versions, recursive);
 			}
 
 			return versions.ToArray ();
 		}
 
-		static void GetFilesVersionInfoCore (LibGit2Sharp.Repository repo, GitRevision rev, List<FilePath> localPaths, List<VersionInfo> versions)
+		static async Task GetFilesVersionInfoCoreAsync (LibGit2Sharp.Repository repo, GitRevision rev, List<FilePath> localPaths, List<VersionInfo> versions)
 		{
-			foreach (var localPath in localPaths) {
-				if (!localPath.IsDirectory) {
-					var file = repo.ToGitPath (localPath);
-					var status = repo.RetrieveStatus (file);
-					AddStatus (repo, rev, file, versions, status, null);
-				}
+			var paths = localPaths.Where (f => !f.IsDirectory).Select (f => repo.ToGitPath (f)).ToArray ();
+			var result = await GitStatus.GetStatusAsync (repo.Info.WorkingDirectory, paths, version: StatusVersion.v1);
+			foreach (var file in paths) {
+				if (!result.TryGetValue (file, out var gitFileState)) {
+					AddStatus (repo, rev, file, versions, GitStatusCode.Unmodified, null);
+				} else
+					AddStatus (repo, rev, file, versions, gitFileState.StageState, null);
 			}
 		}
 
-		static void AddStatus (LibGit2Sharp.Repository repo, GitRevision rev, string file, List<VersionInfo> versions, FileStatus status, string directoryPath)
+		static void AddStatus (LibGit2Sharp.Repository repo, GitRevision rev, string file, List<VersionInfo> versions, GitStatusCode status, string directoryPath)
 		{
-			VersionStatus fstatus = VersionStatus.Versioned;
-
-			if (status != FileStatus.Unaltered) {
-				if ((status & FileStatus.NewInIndex) != 0)
-					fstatus |= VersionStatus.ScheduledAdd;
-				else if ((status & (FileStatus.DeletedFromIndex | FileStatus.DeletedFromWorkdir)) != 0)
-					fstatus |= VersionStatus.ScheduledDelete;
-				else if ((status & (FileStatus.TypeChangeInWorkdir | FileStatus.TypeChangeInIndex | FileStatus.ModifiedInWorkdir | FileStatus.ModifiedInIndex)) != 0)
-					fstatus |= VersionStatus.Modified;
-				else if ((status & (FileStatus.RenamedInIndex | FileStatus.RenamedInWorkdir)) != 0)
-					fstatus |= VersionStatus.ScheduledReplace;
-				else if ((status & (FileStatus.Nonexistent | FileStatus.NewInWorkdir)) != 0)
-					fstatus = VersionStatus.Unversioned;
-				else if ((status & FileStatus.Ignored) != 0)
-					fstatus = VersionStatus.Ignored;
-			}
-
-			if (repo.Index.Conflicts [file] != null)
-				fstatus = VersionStatus.Versioned | VersionStatus.Conflicted;
-
+			var fstatus = ConvertGitState (status);
 			var versionPath = repo.FromGitPath (file);
 			if (directoryPath != null && versionPath.ParentDirectory != directoryPath) {
 				return;
@@ -879,17 +866,51 @@ namespace MonoDevelop.VersionControl.Git
 			versions.Add (new VersionInfo (versionPath, "", false, fstatus, rev, fstatus == VersionStatus.Ignored ? VersionStatus.Unversioned : VersionStatus.Versioned, null));
 		}
 
-		static void GetDirectoryVersionInfoCore (LibGit2Sharp.Repository repo, GitRevision rev, FilePath directory, List<VersionInfo> versions, bool recursive)
+		static VersionStatus ConvertGitState (GitStatusCode status)
 		{
-			var relativePath = repo.ToGitPath (directory);
-			var status = repo.RetrieveStatus (new StatusOptions {
-				DisablePathSpecMatch = true,
-				PathSpec = relativePath != "." ? new [] { relativePath } : new string[0],
-				IncludeUnaltered = true,
-			});
+			switch (status) {
+			case GitStatusCode.Untracked:
+				return VersionStatus.Unversioned;
+			case GitStatusCode.Ignored:
+				return VersionStatus.Ignored;
+			default:
+				switch (status & GitStatusCode.INDEX_MASK) {
+				case GitStatusCode.IndexAdded:
+					return VersionStatus.Versioned | VersionStatus.ScheduledAdd;
+				case GitStatusCode.IndexDeleted:
+					return VersionStatus.Versioned | VersionStatus.ScheduledDelete;
+				case GitStatusCode.IndexTypeChanged:
+				case GitStatusCode.IndexModified:
+					return VersionStatus.Versioned | VersionStatus.Modified;
+				case GitStatusCode.IndexCopied:
+					return VersionStatus.Versioned | VersionStatus.ScheduledReplace;
+				case GitStatusCode.IndexUnmerged:
+					return VersionStatus.Versioned | VersionStatus.Conflicted;
+				}
 
-			foreach (var statusEntry in status) {
-				AddStatus (repo, rev, statusEntry.FilePath, versions, statusEntry.State, recursive ? null : directory);
+				switch (status & GitStatusCode.WORKTREE_MASK) {
+				case GitStatusCode.WorktreeAdded:
+					return VersionStatus.Versioned | VersionStatus.ScheduledAdd;
+				case GitStatusCode.WorktreeDeleted:
+					return VersionStatus.Versioned | VersionStatus.ScheduledDelete;
+				case GitStatusCode.WorktreeTypeChanged:
+				case GitStatusCode.WorktreeModified:
+					return VersionStatus.Versioned | VersionStatus.Modified;
+				case GitStatusCode.WorktreeCopied:
+					return VersionStatus.Versioned | VersionStatus.ScheduledReplace;
+				case GitStatusCode.WorktreeUnmerged:
+					return VersionStatus.Versioned | VersionStatus.Conflicted;
+				}
+
+				return VersionStatus.Versioned;
+			}
+		}
+
+		static async Task GetDirectoryVersionInfoCoreAsync (LibGit2Sharp.Repository repo, GitRevision rev, FilePath directory, List<VersionInfo> versions, bool recursive)
+		{
+			var result = await GitStatus.GetStatusAsync (repo.Info.WorkingDirectory, new [] { directory.ToString() } , version: StatusVersion.v1);
+			foreach (var file in result) {
+				AddStatus (repo, rev, file.Key, versions, file.Value.StageState, recursive ? null : directory);
 			}
 		}
 
@@ -1391,52 +1412,33 @@ namespace MonoDevelop.VersionControl.Git
 			});
 		}
 
-		protected override Task OnCheckoutAsync (FilePath targetLocalPath, Revision rev, bool recurse, ProgressMonitor monitor)
+		protected override async Task OnCheckoutAsync (FilePath targetLocalPath, Revision rev, bool recurse, ProgressMonitor monitor)
 		{
-			int transferProgress = 0;
-			int checkoutProgress = 0;
-
 			try {
-				monitor.BeginTask ("Cloning...", 2);
+				monitor.BeginTask ("Cloning…", 100);
+				if (!Directory.Exists (targetLocalPath))
+					Directory.CreateDirectory (targetLocalPath);
+				var options = new GitCloneOptions { RecurseSubmodules = recurse };
+				var result = await GitClone.CloneAsync (Url, targetLocalPath, CreateCallbacks (monitor), options, monitor.CancellationToken);
+				if (result.Properties.TryGetValue (GitCloneOptions.CloneTargetProperty, out var rootPath)) {
+					RootPath = targetLocalPath.Combine (rootPath).CanonicalPath.ParentDirectory;
+				} else {
+					return;
+				}
 
-				RunOperation (() => RetryUntilSuccess (monitor, credType => {
-					try {
-						RootPath = LibGit2Sharp.Repository.Clone (Url, targetLocalPath, new CloneOptions {
-							CredentialsProvider = (url, userFromUrl, types) => {
-								transferProgress = checkoutProgress = 0;
-								return GitCredentials.TryGet (url, userFromUrl, types, credType);
-							},
-							RepositoryOperationStarting = ctx => {
-								Runtime.RunInMainThread (() => {
-									monitor.Log.WriteLine ("Checking out repository at '{0}'", ctx.RepositoryPath);
-								});
-								return true;
-							},
-							OnTransferProgress = (tp) => OnTransferProgress (tp, monitor, ref transferProgress),
-							OnCheckoutProgress = (path, completedSteps, totalSteps) => {
-								OnCheckoutProgress (completedSteps, totalSteps, monitor, ref checkoutProgress);
-								Runtime.RunInMainThread (() => {
-									monitor.Log.WriteLine ("Checking out file '{0}'", path);
-								});
-							},
-						});
-					} catch (Exception e) {
-						LoggingService.LogInternalError ("Error while cloning repository " + rev + " recuse: " + recurse, e);
-						throw e;
-					}
-				}), true);
-
-				if (monitor.CancellationToken.IsCancellationRequested || RootPath.IsNull)
-					return Task.CompletedTask;
+				if (monitor.CancellationToken.IsCancellationRequested)
+					return;
 
 				monitor.Step (1);
 
-				RootPath = RootPath.CanonicalPath.ParentDirectory;
 				RootRepository = new LibGit2Sharp.Repository (RootPath);
 				InitFileWatcher ();
-
-				RunOperation (() => RecursivelyCloneSubmodules (RootRepository, monitor), true);
-				return Task.CompletedTask;
+			} catch (OperationCanceledException) {
+				return;
+			} catch (GitExternalException e) {
+				LoggingService.LogInternalError ("Error while running git", e);
+				MessageService.ShowError (GettextCatalog.GetString ("Error while running git"), e.Message);
+				return;
 			} catch (Exception e) {
 				LoggingService.LogInternalError ("Error while cloning repository " + rev + " recuse: " + recurse, e);
 				throw e;
@@ -1445,58 +1447,57 @@ namespace MonoDevelop.VersionControl.Git
 			}
 		}
 
-		static void RecursivelyCloneSubmodules (LibGit2Sharp.Repository rootRepository, ProgressMonitor monitor)
+		GitCallbackHandler CreateCallbacks (ProgressMonitor monitor)
 		{
-			var submodules = new List<string> ();
-			RetryUntilSuccess (monitor, credType => {
-				try {
-					int transferProgress = 0, checkoutProgress = 0;
-					SubmoduleUpdateOptions updateOptions = new SubmoduleUpdateOptions () {
-						Init = true,
-						CredentialsProvider = (url, userFromUrl, types) => {
-							transferProgress = checkoutProgress = 0;
-							return GitCredentials.TryGet (url, userFromUrl, types, credType);
-						},
-						OnTransferProgress = (tp) => OnTransferProgress (tp, monitor, ref transferProgress),
-						OnCheckoutProgress = (file, completedSteps, totalSteps) => {
-							OnCheckoutProgress (completedSteps, totalSteps, monitor, ref checkoutProgress);
-							Runtime.RunInMainThread (() => {
-								monitor.Log.WriteLine ("Checking out file '{0}'", file);
-							});
-						},
-					};
+			var callbacks = new GitCallbackHandler {
+				GetCredentialsHandler = (url) => {
+					var cred = GitCredentials.TryGet (url, Environment.UserName, SupportedCredentialTypes.UsernamePassword, GitCredentialsType.Normal) as UsernamePasswordCredentials;
+					if (cred == null)
+						throw new InvalidOperationException ("Can't get username/password credentials.");
+					return new ClientLibrary.GitCredentials (cred.Username, cred.Password);
+				},
 
-					// Iterate through the submodules (where the submodule is in the index),
-					// and clone them.
-					var submoduleArray = rootRepository.Submodules.Where (sm => sm.RetrieveStatus ().HasFlag (SubmoduleStatus.InIndex)).ToArray ();
-					monitor.BeginTask (submoduleArray.Length);
-					foreach (var sm in submoduleArray) {
-						if (monitor.CancellationToken.IsCancellationRequested) {
-							throw new UserCancelledException ("Recursive clone of submodules was cancelled.");
-						}
+				GetSSHPassword = (userName) => {
+					var cred = GitCredentials.TryGet (Url, userName, SupportedCredentialTypes.Ssh, GitCredentialsType.Normal) as SshUserKeyCredentials;
+					if (cred == null)
+						throw new InvalidOperationException ("Can't ssh password.");
+					return cred.Passphrase;
+				},
 
-						Runtime.RunInMainThread (() => {
-							monitor.Log.WriteLine ("Checking out submodule at '{0}'", sm.Path);
-						});
-						rootRepository.Submodules.Update (sm.Name, updateOptions);
-						monitor.Step (1);
+				GetSSHPassphrase = (key) => {
+					var cred = GitCredentials.TryGet (Url, key, SupportedCredentialTypes.Ssh, GitCredentialsType.Normal) as SshUserKeyCredentials;
+					if (cred == null)
+						throw new InvalidOperationException ("Can't get ssh passphrase.");
+					return cred.Passphrase;
+				},
 
-						submodules.Add (Path.Combine (rootRepository.Info.WorkingDirectory, sm.Path));
-					}
-					monitor.EndTask ();
-				} catch (Exception e) {
-					LoggingService.LogInternalError ("Error RecursivelyCloneSubmodules " + rootRepository, e);
-					throw e;
+				GetContinueConnecting = () => true
+			};
+
+			callbacks.Output += (sender, e) => {
+				Runtime.RunInMainThread (delegate {
+					monitor.Log.WriteLine (e);
+				});
+			};
+			string curTask = null;
+			int oldPercentage = 0;
+			callbacks.Progress += (sender, e) => {
+				if (curTask != e.Operation) {
+					if (curTask != null)
+						monitor.EndTask ();
+					monitor.BeginTask (e.Operation + "…", 100);
+					oldPercentage = 0;
+					curTask = e.Operation;
 				}
-			});
+				monitor.Step (e.Percentage - oldPercentage);
+				oldPercentage = e.Percentage;
 
-			// If we are continuing the recursive operation, then
-			// recurse into nested submodules.
-			// Check submodules to see if they have their own submodules.
-			foreach (string path in submodules) {
-				using (var submodule = new LibGit2Sharp.Repository (path))
-					RecursivelyCloneSubmodules (submodule, monitor);
-			}
+				if (e.Percentage == 100) {
+					monitor.EndTask ();
+					curTask = null;
+				}
+			};
+			return callbacks;
 		}
 
 		protected override async Task OnRevertAsync (FilePath [] localPaths, bool recurse, ProgressMonitor monitor)
