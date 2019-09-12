@@ -82,7 +82,7 @@ namespace MonoDevelop.Ide.Gui.Components
 				SetupMenu ();
 			}
 
-			public LogTextView () 
+			public LogTextView ()
 			{
 				menuSet = new CommandEntrySet ();
 				SetupMenu ();
@@ -189,7 +189,7 @@ namespace MonoDevelop.Ide.Gui.Components
 					case 3: // search file name start
 						if (ch == ' ') {
 							if (lineText [i + 1] == '/' ||  // unix style start
-							    (char.IsLetter (lineText [i + 1]) && lineText [i + 2] == ':' && lineText [i + 3] == '\\') // windows style start
+								(char.IsLetter (lineText [i + 1]) && lineText [i + 2] == ':' && lineText [i + 3] == '\\') // windows style start
 							   )
 								fileNameStart = i + 1;
 						}
@@ -254,7 +254,7 @@ namespace MonoDevelop.Ide.Gui.Components
 			buffer = new TextBuffer (new TextTagTable ());
 			textEditorControl = new LogTextView (buffer);
 			textEditorControl.Editable = false;
-			
+
 			scrollView.ShadowType = ShadowType.None;
 			scrollView.Add (textEditorControl);
 			PackEnd (scrollView, true, true, 0);
@@ -262,7 +262,7 @@ namespace MonoDevelop.Ide.Gui.Components
 			bold = new TextTag ("bold");
 			bold.Weight = Weight.Bold;
 			buffer.TagTable.Add (bold);
-			
+
 			errorTag = new TextTag ("error");
 			errorTag.Foreground = Styles.ErrorForegroundColor.ToHexString (false);
 			errorTag.Weight = Weight.Bold;
@@ -285,7 +285,7 @@ namespace MonoDevelop.Ide.Gui.Components
 
 			UpdateCustomFont ();
 			IdeApp.Preferences.CustomOutputPadFont.Changed += HandleCustomFontChanged;
-			
+
 			outputDispatcher = new GLib.TimeoutHandler (outputDispatchHandler);
 
 			InitSearchWidget ();
@@ -384,7 +384,7 @@ namespace MonoDevelop.Ide.Gui.Components
 
 		static StringComparison GetComparer ()
 		{
-			if (PropertyService.Get ("AutoSetPatternCasing", true)) {
+			if (PropertyService.Get ("AutoSetPatternCasing", false)) {
 				if (currentSearchPattern != null && currentSearchPattern.Any (Char.IsUpper))
 					return StringComparison.Ordinal;
 			}
@@ -414,7 +414,7 @@ namespace MonoDevelop.Ide.Gui.Components
 			if (idx >= 0) {
 				var iter = buffer.GetIterAtOffset (idx + currentSearchPattern.Length);
 				buffer.PlaceCursor (iter);
-				buffer.SelectRange (buffer.GetIterAtOffset (idx), iter); 
+				buffer.SelectRange (buffer.GetIterAtOffset (idx), iter);
 				textEditorControl.ScrollToIter (iter, 0, false, 0, 0);
 			}
 		}
@@ -449,7 +449,7 @@ namespace MonoDevelop.Ide.Gui.Components
 			if (idx >= 0) {
 				var iter = buffer.GetIterAtOffset (idx + currentSearchPattern.Length);
 				buffer.PlaceCursor (iter);
-				buffer.SelectRange (buffer.GetIterAtOffset (idx), iter); 
+				buffer.SelectRange (buffer.GetIterAtOffset (idx), iter);
 				textEditorControl.ScrollToIter (iter, 0, false, 0, 0);
 			}
 
@@ -505,19 +505,19 @@ namespace MonoDevelop.Ide.Gui.Components
 				outputDispatcherRunning = false;
 			}
 
-			buffer.Clear();
+			buffer.Clear ();
 		}
-		
+
 		void HandleCustomFontChanged (object sender, EventArgs e)
 		{
 			UpdateCustomFont ();
 		}
-		
+
 		void UpdateCustomFont ()
 		{
 			textEditorControl.ModifyFont (IdeApp.Preferences.CustomOutputPadFont ?? IdeServices.FontService.MonospaceFont);
 		}
-		
+
 		//mechanism to to batch copy text when large amounts are being dumped
 		bool outputDispatchHandler ()
 		{
@@ -546,7 +546,7 @@ namespace MonoDevelop.Ide.Gui.Components
 			lock (updates) {
 				if (destroyed)
 					return;
-				
+
 				updates.Enqueue (update);
 				if (!outputDispatcherRunning) {
 					GLib.Timeout.Add (50, outputDispatcher);
@@ -607,7 +607,7 @@ namespace MonoDevelop.Ide.Gui.Components
 			var et = new QueuedEndTask (monitor);
 			addQueuedUpdate (et);
 		}
-		
+
 		protected void UnsafeEndTask (LogViewProgressMonitor monitor)
 		{
 			if (monitor != null) {
@@ -709,7 +709,7 @@ namespace MonoDevelop.Ide.Gui.Components
 		/// </summary>
 		/// <param name="text"></param>
 		/// <returns>original text with control characters and escape sequences removed</returns>
-		string SanitizeConsoleText(string text)
+		string SanitizeConsoleText (string text)
 		{
 			return consoleTextSanitizerRegex.Replace (text, string.Empty);
 		}
@@ -738,7 +738,7 @@ namespace MonoDevelop.Ide.Gui.Components
 				buffer.InsertWithTags (ref it, text, indentTag ?? normalTag, extraTag);
 			else
 				buffer.InsertWithTags (ref it, text, indentTag ?? normalTag);
-			
+
 			if (scrollToEnd) {
 				it.LineOffset = 0;
 				buffer.MoveMark (endMark, it);
@@ -758,13 +758,13 @@ namespace MonoDevelop.Ide.Gui.Components
 
 			base.OnDestroyed ();
 		}
-		
+
 		abstract class QueuedUpdate
 		{
 			public LogViewProgressMonitor Monitor { get; protected set; }
 			public abstract void Execute (LogView pad);
 		}
-		
+
 		class QueuedTextWrite : QueuedUpdate
 		{
 			readonly System.Text.StringBuilder Text;
@@ -774,14 +774,14 @@ namespace MonoDevelop.Ide.Gui.Components
 			{
 				pad.UnsafeAddText (Monitor?.Marker, Text.ToString (), Monitor?.Indent.IndentTag, Tag);
 			}
-			
+
 			public QueuedTextWrite (LogViewProgressMonitor monitor, string text, TextTag tag)
 			{
 				Monitor = monitor;
 				Text = new System.Text.StringBuilder (text);
 				Tag = tag;
 			}
-			
+
 			public void Write (string s)
 			{
 				Text.Append (s);
@@ -789,7 +789,7 @@ namespace MonoDevelop.Ide.Gui.Components
 					Text.Remove (0, Text.Length - MAX_BUFFER_LENGTH);
 			}
 		}
-		
+
 		class QueuedBeginTask : QueuedUpdate
 		{
 			public string Name;
@@ -807,7 +807,7 @@ namespace MonoDevelop.Ide.Gui.Components
 				Name = name;
 			}
 		}
-		
+
 		class QueuedEndTask : QueuedUpdate
 		{
 			public override void Execute (LogView pad)
@@ -830,12 +830,13 @@ namespace MonoDevelop.Ide.Gui.Components
 		LogTextWriter internalLogger = new LogTextWriter ();
 		NotSupportedTextReader inputReader = new NotSupportedTextReader ();
 		OperationConsole console;
-		
+
 		internal LogView LogView {
 			get { return outputPad; }
 		}
 
-		internal class IndentTracker {
+		internal class IndentTracker
+		{
 			static int trackerID = 0;
 
 			Stack<TextTag> tags = new Stack<TextTag> ();
@@ -880,7 +881,7 @@ namespace MonoDevelop.Ide.Gui.Components
 
 		//FIXME: this sync context is somewhat redundant, as the pad does its own GUI synchronization
 		//that said, it's also used for the console and writers, so it's not simple to fix
-		internal LogViewProgressMonitor (LogView pad, bool clearConsole): base (Runtime.MainSynchronizationContext)
+		internal LogViewProgressMonitor (LogView pad, bool clearConsole) : base (Runtime.MainSynchronizationContext)
 		{
 			outputPad = pad;
 
@@ -941,7 +942,7 @@ namespace MonoDevelop.Ide.Gui.Components
 				outputPad.WriteConsoleLogText (this, text);
 			}
 		}
-		
+
 		protected override void OnCompleted ()
 		{
 			if (!CheckPadValid ())
@@ -1039,11 +1040,11 @@ namespace MonoDevelop.Ide.Gui.Components
 			}
 		}
 	}
-	
-	class NotSupportedTextReader: TextReader
+
+	class NotSupportedTextReader : TextReader
 	{
 		bool userWarned;
-		
+
 		void WarnUser ()
 		{
 			if (userWarned)
@@ -1057,41 +1058,41 @@ namespace MonoDevelop.Ide.Gui.Components
 			);
 			MessageService.ShowWarning (title, desc);
 		}
-		
+
 		public override int Peek ()
 		{
 			WarnUser ();
 			return -1;
 		}
-		
-		public override int ReadBlock (char[] buffer, int index, int count)
+
+		public override int ReadBlock (char [] buffer, int index, int count)
 		{
 			WarnUser ();
-			return base.ReadBlock(buffer, index, count);
+			return base.ReadBlock (buffer, index, count);
 		}
-		
-		public override int Read (char[] buffer, int index, int count)
+
+		public override int Read (char [] buffer, int index, int count)
 		{
 			WarnUser ();
-			return base.Read(buffer, index, count);
+			return base.Read (buffer, index, count);
 		}
-		
+
 		public override int Read ()
 		{
 			WarnUser ();
-			return base.Read();
+			return base.Read ();
 		}
-		
+
 		public override string ReadLine ()
 		{
 			WarnUser ();
-			return base.ReadLine();
+			return base.ReadLine ();
 		}
-		
+
 		public override string ReadToEnd ()
 		{
 			WarnUser ();
-			return base.ReadToEnd();
+			return base.ReadToEnd ();
 		}
 	}
 }

@@ -41,7 +41,7 @@ namespace MonoDevelop.Components.MainToolbar
 {
 	class SearchInSolutionSearchCategory : SearchCategory
 	{
-		public SearchInSolutionSearchCategory () : base (GettextCatalog.GetString("Search"))
+		public SearchInSolutionSearchCategory () : base (GettextCatalog.GetString ("Search"))
 		{
 			this.sortOrder = SearchInSolutionOrder;
 		}
@@ -59,9 +59,9 @@ namespace MonoDevelop.Components.MainToolbar
 		//		return (ISearchDataSource)new SearchInSolutionDataSource (searchPattern);
 		//	});
 		//} 
-		static readonly string[] tags = { "search" };
+		static readonly string [] tags = { "search" };
 
-		public override string[] Tags {
+		public override string [] Tags {
 			get {
 				return tags;
 			}
@@ -92,7 +92,7 @@ namespace MonoDevelop.Components.MainToolbar
 			public override void Activate ()
 			{
 				var options = new FilterOptions ();
-				if (PropertyService.Get ("AutoSetPatternCasing", true))
+				if (PropertyService.Get ("AutoSetPatternCasing", false))
 					options.CaseSensitive = pattern.Pattern.Any (char.IsUpper);
 				FindInFilesDialog.SearchReplace (pattern.Pattern, null, new WholeSolutionScope (), options, null, null);
 			}
