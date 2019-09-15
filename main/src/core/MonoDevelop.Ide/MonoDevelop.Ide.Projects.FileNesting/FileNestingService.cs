@@ -61,7 +61,16 @@ namespace MonoDevelop.Ide.Projects.FileNesting
 
 		static ProjectNestingInfo GetProjectNestingInfo (Project project)
 		{
-			return loadedProjects.GetValue (project, p => new ProjectNestingInfo (p));
+			if (!loadedProjects.TryGetValue (project, out var pinfo)) {
+				if (!AppliesToProject (project)) {
+					return null;
+				}
+
+				pinfo = new ProjectNestingInfo (project);
+				loadedProjects.Add (project, pinfo);
+			}
+
+			return pinfo;
 		}
 
 		internal static ProjectFile InternalGetParentFile (ProjectFile inputFile)
@@ -92,18 +101,18 @@ namespace MonoDevelop.Ide.Projects.FileNesting
 
 		public static ProjectFile GetParentFile (ProjectFile inputFile)
 		{
-			return GetProjectNestingInfo (inputFile.Project).GetParentForFile (inputFile);
+			return GetProjectNestingInfo (inputFile.Project)?.GetParentForFile (inputFile);
 		}
 
 		public static bool HasChildren (ProjectFile inputFile)
 		{
-			var children = GetProjectNestingInfo (inputFile.Project).GetChildrenForFile (inputFile);
+			var children = GetProjectNestingInfo (inputFile.Project)?.GetChildrenForFile (inputFile);
 			return (children?.Count ?? 0) > 0;
 		}
 
 		public static ProjectFileCollection GetChildren (ProjectFile inputFile)
 		{
-			return GetProjectNestingInfo (inputFile.Project).GetChildrenForFile (inputFile);
+			return GetProjectNestingInfo (inputFile.Project)?.GetChildrenForFile (inputFile);
 		}
 	}
 
